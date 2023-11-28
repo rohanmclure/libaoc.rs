@@ -1,70 +1,145 @@
-use std::ops::{Index, IndexMut};
+use std::{ops::{Index, IndexMut}, fmt::Debug};
 
-pub trait MatrixView<T>: Index<(usize, usize), Output = T> + IndexMut<(usize, usize)>
-{
-    fn get_dims(&self) -> (usize, usize);
+use super::matrix::Matrix;
 
-    // fn view<Idx>(self, range_i: (Idx, Idx),
-    //              range_j: (Idx, Idx)) -> SubMatrix<T>;
-    fn view(self, range_i: (usize, usize),
-            range_j: (usize, usize)) -> SubMatrix<T>;
-    fn transpose(self) -> Transpose<T>;
+enum Backing<'a, T> {
+    Real(&'a Matrix<T>),
+    View(Box::<MView<'a, T>>)
 }
 
-/*
- * Support for views into larger matrices
- */
-pub struct SubMatrix<T> {
-    backing: Box<dyn MatrixView<T>>,
-    range_i: (usize, usize),
-    range_j: (usize, usize)
+pub struct MView<'a, T> {
+    map: Box<dyn IndexMap>,
+    backing: Backing<'a, T>
 }
 
-impl<T, Idx> Index<(Idx, Idx)> for SubMatrix<T>
+impl<'a, T> MView<'a, T> {
+    pub fn get_domain(&self) -> ((isize, isize), (isize, isize)) {
+        (&*self.map).get_domain()
+    }
+
+    pub fn get_dims(&self) -> (usize, usize) {
+        let (range_i, range_j) = self.get_domain();
+        ((range_i.1 - range_i.0).try_into().unwrap(),
+         (range_j.1 - range_j.0).try_into().unwrap())
+    }
+}
+
+impl<'a, T, Idx, E: Debug> Index<(Idx, Idx)> for MView<'a, T>
 where
-    Idx: Into<usize>
+    Idx: TryInto<isize, Error = E>
 {
     type Output = T;
 
-    fn index(&self, index: (Idx, Idx)) -> &Self::Output {
-        let (ri, rj) = (self.range_i.0,
-                        self.range_j.0);
-        let (i, j): (usize, usize) = (index.0.into(), index.1.into());
-        &(*self.backing)[(ri + i, rj + j)]
+    fn index(&self, idx: (Idx, Idx)) -> &Self::Output {
+        let idx = self.map.index_map((idx.0.try_into().unwrap(),
+                                      idx.1.try_into().unwrap()));
+        match &self.backing {
+            &Backing::Real(m) => &m[idx],
+            Backing::View(v)  => &v[idx]
+        }
     }
 }
 
-impl<T, Idx> IndexMut<(Idx, Idx)> for SubMatrix<T>
-where
-    Idx: Into<usize>
-{
-    fn index_mut(&mut self, index: (Idx, Idx)) -> &mut Self::Output {
-        let (ri, rj) = (self.range_i.0,
-                        self.range_j.0);
-        let (i, j): (usize, usize) = (index.0.into(), index.1.into());
-        &mut (*self.backing)[(ri + i, rj + j)]
+/* Some default index maps */
+pub trait IndexMap {
+    fn get_domain(&self) -> ((isize, isize), (isize, isize));
+    fn index_map(&self, idx: (isize, isize)) -> (isize, isize);
+}
+
+
+struct TransposeMap {
+    range_i: (isize, isize),
+    range_j: (isize, isize)
+}
+
+impl IndexMap for TransposeMap {
+    fn get_domain(&self) -> ((isize, isize), (isize, isize)) {
+        (self.range_i, self.range_j)
+    }
+
+    fn index_map(&self, idx: (isize, isize)) -> (isize, isize) {
+        let (i, j) = idx;
+        (j, i)
     }
 }
 
-impl<T> MatrixView<T> for SubMatrix<T> {
-    fn get_dims(&self) -> (usize, usize) {
-        (self.range_i.1 - self.range_i.0 + 1,
-         self.range_j.1 - self.range_j.0 + 1)
+
+pub struct OffsetMap {
+    start_offset: (isize, isize),
+    src_domain: ((isize, isize), (isize, isize))
+}
+
+impl IndexMap for OffsetMap {
+    fn get_domain(&self) -> ((isize, isize), (isize, isize)) {
+        let (dims_i, dims_j) = self.src_domain;
+        let (si, sj) = self.start_offset;
+        ((dims_i.0 - si, dims_i.1 - si),
+         (dims_j.0 - sj, dims_j.1 - sj))
     }
 
-    fn view(self, range_i: (usize, usize),
-            range_j: (usize, usize)) -> SubMatrix<T> {
-        SubMatrix { backing: Box::new(self), range_i, range_j }
+    fn index_map(&self, idx: (isize, isize)) -> (isize, isize) {
+        let (i, j) = idx;
+        (i + self.start_offset.0,
+         j + self.start_offset.1)
+    }
+}
+
+
+/*
+ * Factories for creating immutable views into the matrix.
+ */
+
+impl<T> Matrix<T> {
+    pub fn view(&self, range_i: (isize, isize),
+                range_j: (isize, isize)) -> MView<T> {
+        let (m, n) = self.get_dims();
+        MView {
+            map: Box::new(OffsetMap {
+                start_offset: (range_i.0,
+                               range_j.0),
+                src_domain: ((0, m.try_into().unwrap()),
+                             (0, n.try_into().unwrap()))
+            }),
+            backing: Backing::Real(self)
+        }
     }
 
-    fn transpose(self) -> Transpose<T> {
-        Transpose { backing: Box::new(self) }
+    pub fn transpose(&self) -> MView<T> {
+        let (m, n) = self.get_dims();
+        MView {
+            map: Box::new(TransposeMap {
+                range_i: (0, n.try_into().unwrap()),
+                range_j: (0, m.try_into().unwrap())
+            }),
+            backing: Backing::Real(self)
+        }
     }
 }
 
 /*
- * Lazy transpose into a submatrix
+ * The same factories for view types.
  */
-pub struct Transpose<T> {
-    backing: Box<dyn MatrixView<T>>
+impl<'a, T> MView<'a, T> {
+    pub fn view(self, range_i: (isize, isize),
+                range_j: (isize, isize)) -> MView<'a, T> {
+        MView {
+            map: Box::new(OffsetMap {
+                start_offset: (range_i.0,
+                               range_j.0),
+                src_domain: self.get_domain()
+            }),
+            backing: Backing::View(Box::new(self))
+        }
+    }
+
+    pub fn transpose(self) -> MView<'a, T> {
+        let (m, n) = self.get_dims();
+        MView {
+            map: Box::new(TransposeMap {
+                range_i: (0, n.try_into().unwrap()),
+                range_j: (0, m.try_into().unwrap())
+            }),
+            backing: Backing::View(Box::new(self)),
+        }
+    }
 }
