@@ -70,7 +70,8 @@ where
                                       index.1.try_into().unwrap());
         let (i, j): (usize, usize) = (i.try_into().unwrap(),
                                       j.try_into().unwrap());
-        let m = self.dims.0;
+        let (m, n) = self.dims;
+        assert!(i < m && j < n, "Index out of bounds at ({i},{j})");
         unsafe {
             self.base_ptr.as_ptr().add(i + j*m).as_ref()
         }.unwrap()

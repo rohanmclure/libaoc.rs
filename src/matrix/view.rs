@@ -79,8 +79,15 @@ impl IndexMap for OffsetMap {
 
     fn index_map(&self, idx: (isize, isize)) -> (isize, isize) {
         let (i, j) = idx;
-        (i + self.start_offset.0,
-         j + self.start_offset.1)
+        println!("This view counts from offset: {:?}", self.start_offset);
+        let ridx = (i + self.start_offset.0,
+                    j + self.start_offset.1);
+        debug_assert!({
+            let (ri, rj) = ridx;
+                self.src_domain.0.0 <= ri && ri < self.src_domain.0.1
+             && self.src_domain.1.0 <= rj && rj < self.src_domain.1.1
+        }, "Index into matrix view outside of reported domain indices at ({i},{j}).");
+        ridx
     }
 }
 
@@ -92,13 +99,10 @@ impl IndexMap for OffsetMap {
 impl<T> Matrix<T> {
     pub fn view(&self, range_i: (isize, isize),
                 range_j: (isize, isize)) -> MView<T> {
-        let (m, n) = self.get_dims();
         MView {
             map: Box::new(OffsetMap {
-                start_offset: (range_i.0,
-                               range_j.0),
-                src_domain: ((0, m.try_into().unwrap()),
-                             (0, n.try_into().unwrap()))
+                start_offset: (range_i.0, range_j.0),
+                src_domain: (range_i, range_j)
             }),
             backing: Backing::Real(self)
         }
@@ -119,14 +123,17 @@ impl<T> Matrix<T> {
 /*
  * The same factories for view types.
  */
+
 impl<'a, T> MView<'a, T> {
     pub fn view(self, range_i: (isize, isize),
                 range_j: (isize, isize)) -> MView<'a, T> {
+        let ((dia, dib), (dja, djb)) = self.get_domain();
         MView {
             map: Box::new(OffsetMap {
                 start_offset: (range_i.0,
                                range_j.0),
-                src_domain: self.get_domain()
+                src_domain: ((dia - range_i.0, dib - range_i.1),
+                             (dja - range_j.0, djb - range_j.1))
             }),
             backing: Backing::View(Box::new(self))
         }

@@ -42,9 +42,9 @@ fn matrix_view() {
     }
 
     let v = m.view((5,10), (10,20));
-    for i in 5 .. 10 {
-        for j in 10 .. 20 {
-            assert_eq!(v[(i,j)], (i,j));
+    for i in 0 .. 5 {
+        for j in 0 .. 10 {
+            assert_eq!(v[(i,j)], (i+5,j+10));
         }
     }
 }
@@ -61,9 +61,9 @@ fn matrix_mixed() {
 
     let vt = m.view((5,10), (10,20))
               .transpose();
-    for i in 5 .. 10 {
-        for j in 10 .. 20 {
-            assert_eq!(vt[(i,j)], (j,i));
+    for i in 0 .. 10 {
+        for j in 0 .. 5 {
+            assert_eq!(vt[(i,j)], (j+5,i+10));
         }
     }
 }
