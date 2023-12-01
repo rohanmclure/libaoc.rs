@@ -12,22 +12,22 @@ use super::graph::Graph;
 
 struct MatrixGraph<V, E> {
     vmap: Vec<V>,
-    hmap: HashMap<V, usize>,
+    hmap: HashMap<*const V, usize>,
     adj: Matrix<Option<E>>
 }
 
 impl<V, E> MatrixGraph<V, E>
 where
-    V: Copy+Eq+Hash
+    V: Copy
 {
     pub fn new(vmap: Box<dyn Iterator<Item = &V>>,
                adj: Matrix<Option<E>>)
         -> Self
     {
         let mut hmap = HashMap::new();
-        let vmap = vmap.enumerate().map(&mut |(i, &v)| {
-            hmap.insert(v, i);
-            v
+        let vmap = vmap.enumerate().map(&mut |(i, v): (usize, &V)| {
+            hmap.insert(v as *const V, i);
+            *v
         }).collect();
 
         MatrixGraph {
@@ -38,7 +38,7 @@ where
     }
 
     fn get_idx(&self, v: &V) -> usize {
-        self.hmap[v]
+        self.hmap[&(v as *const V )]
     }
 }
 
@@ -59,8 +59,12 @@ where
         n.into_iter()
     }
 
-    fn get_arc(&self, v: &V, u: &V) -> Option<E> {
+    fn get_arc(&'a self, v: &'a V, u: &'a V) -> Option<&'a E> {
         let idx = (self.get_idx(v), self.get_idx(u));
-        self.adj[idx]
+        (&self.adj[idx]).as_ref()
+    }
+
+    fn vertices_iter(&'a self) -> impl Iterator<Item=&'a V> {
+        self.vmap.iter()
     }
 }
